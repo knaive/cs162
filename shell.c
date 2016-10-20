@@ -20,16 +20,14 @@ void prompt() {
 }
 
 int split(char *exe, char separator, char*argv[]) {
-    int first, count = 0;
+    int count = 0;
+    char last = separator;
     while(*exe != 0) {
         if(*exe == separator) {
+            last = *exe;
             *exe = 0;
-            first = 0;
-            exe++;
-            continue;
-        }
-        first++;
-        if(first == 1) {
+        } else if(last == separator) {
+            last = *exe;
             argv[count] = exe;
             count++;
         }
@@ -57,8 +55,6 @@ char* get_full_path(char *cmd) {
     char **argv = (char **) malloc(sizeof(char *)*count);
     strcpy(env_copy, env);
     int ret = split(env_copy, ':', argv);
-    printf("ret: %d, count: %d \n", ret, count);
-
     char *fullpath = (char *) malloc(len+cmd_len+2);
     while(count--) {
         *fullpath = '\0';

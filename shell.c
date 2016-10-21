@@ -19,7 +19,7 @@ void prompt() {
     input[strlen(input)-1] = '\0';
 }
 
-int split(char *exe, char separator, char*argv[]) {
+int split(char *exe, char separator, char* tokens[]) {
     int count = 0;
     char last = separator;
     while(*exe != 0) {
@@ -28,12 +28,26 @@ int split(char *exe, char separator, char*argv[]) {
             *exe = 0;
         } else if(last == separator) {
             last = *exe;
-            argv[count] = exe;
+            tokens[count] = exe;
             count++;
         }
         exe++;
     }
+    tokens[count] = NULL;
     return count;
+}
+
+int search(char* target, char* argv[]) {
+    char** p = argv;
+    int index = 0;
+    while(*p != NULL) {
+        if(strcmp(*p, target) == 0) {
+            return index;
+        }
+        index++;
+        p++;
+    }
+    return -1;
 }
 
 //of course we can use execvp, but the course prohibit it
@@ -42,7 +56,7 @@ char* get_full_path(char *cmd) {
 
     const char* env = getenv("PATH");
     int len = 0, count = 1, cmd_len = strlen(cmd);
-    char *p = env;
+    const char *p = env;
     while(*p!='\0') {
         if(*p == ':') {
             count++;
@@ -96,17 +110,20 @@ void dispatch() {
         if(pid > 0) {
             wait(&status);
         } else if(pid == 0) {
-            int fd;
-            if(len>1 && strcmp(argv[1], "<") == 0) {
-                if(len<=2) goto invalid_format;
-                fd = open(argv[2], O_RDONLY|O_CREAT|O_TRUNC);
+            int fd, index;
+            if((index = search("<", argv)) != -1) {
+                if(index+1 >= len) goto invalid_format;
+                fd = open(argv[index+1], O_RDONLY);
                 dup2(fd, STDIN_FILENO);
-            } else if(len>2&&strcmp(argv[2], ">") == 0) {
-                if(len<=3) goto invalid_format;
-                fd = open(argv[3], O_WRONLY);
+                argv[index] = NULL;
+            } else if((index = search(">", argv)) != -1) {
+                if(index+1 >= len) goto invalid_format;
+                fd = open(argv[index+1], O_WRONLY|O_CREAT|O_TRUNC);
                 dup2(fd, STDOUT_FILENO);
+                argv[index] = NULL;
             }
             execv(exe, argv);
+            printf("Something's wrong!\n");
             exit(0);
         } else {
             printf("Error\n");

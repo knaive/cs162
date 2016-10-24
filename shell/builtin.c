@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <fcntl.h>
 #include <signal.h>
 #include "builtin.h"
@@ -18,7 +19,7 @@ int most_recent = -1;
 static void wait_all_bgproc(char *argv[]) {
     int status;
     while(most_recent) {
-        waitpid(bg_proc[most_recent], &status, 0);
+        waitpid(bg_proc[most_recent].pid, &status, 0);
         printf("[JOB %d]\t%d\tDone\t %s\n", most_recent, bg_proc[most_recent].pid, bg_proc[most_recent].argv);
         bg_proc[most_recent].pid = 0;
         free(bg_proc[most_recent].argv);
@@ -30,7 +31,9 @@ static void wait_all_bgproc(char *argv[]) {
 void add_background_proc(pid_t pid, char *argv) {
     most_recent++;
     bg_proc[most_recent].pid = pid;
-    bg_proc[most_recent].argv = argv;
+    int n = strlen(argv)+1;
+    bg_proc[most_recent].argv = (char *)malloc(sizeof(char)*n);
+    strcpy(bg_proc[most_recent].argv, argv);
     printf("[JOB %d]: %d\n", most_recent+1, pid);
 }
 
@@ -68,14 +71,14 @@ struct cmd_map {
     {NULL, NULL}
 };
 
-void try_execute_builtin(char *argv[]) {
+int try_execute_builtin(char **argv) {
     struct cmd_map *p = builtin_table;
     while(p->exe != NULL) {
         if(strcmp(p->exe, argv[0])==0) {
             p->func(argv);
-            exit(0);
+            return 1;
         }
         p++;
     }
-    return;
+    return 0;
 }

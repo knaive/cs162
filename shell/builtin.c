@@ -9,18 +9,22 @@
 #include <signal.h>
 #include "builtin.h"
 
+#define BACKGROUND_PROC_MAX 4096
+#define BUF_MAX_LEN 4096
+
 char buffer[BUF_MAX_LEN];
 
 struct background_proc {
     pid_t pid;
     char *argv;
-} bg_proc[PROC_MAX];
-int most_recent = -1;
+} bg_proc[BACKGROUND_PROC_MAX+1];
+size_t most_recent = 0;
+
 static void wait_all_bgproc(char *argv[]) {
     int status;
     while(most_recent) {
         waitpid(bg_proc[most_recent].pid, &status, 0);
-        printf("[JOB %d]\t%d\tDone\t %s\n", most_recent, bg_proc[most_recent].pid, bg_proc[most_recent].argv);
+        printf("[JOB %zu]\t%d\tDone\t %s\n", most_recent, bg_proc[most_recent].pid, bg_proc[most_recent].argv);
         bg_proc[most_recent].pid = 0;
         free(bg_proc[most_recent].argv);
         bg_proc[most_recent].argv = NULL;
@@ -31,10 +35,10 @@ static void wait_all_bgproc(char *argv[]) {
 void add_background_proc(pid_t pid, char *argv) {
     most_recent++;
     bg_proc[most_recent].pid = pid;
-    int n = strlen(argv)+1;
+    size_t n = strlen(argv)+1;
     bg_proc[most_recent].argv = (char *)malloc(sizeof(char)*n);
     strcpy(bg_proc[most_recent].argv, argv);
-    printf("[JOB %d]: %d\n", most_recent+1, pid);
+    printf("[JOB %zu]: %d\n", most_recent, pid);
 }
 
 static void help(char *argv[]) {

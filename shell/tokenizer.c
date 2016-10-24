@@ -41,7 +41,7 @@ char* get_full_path(char *cmd) {
     if(access(cmd, F_OK) != -1) return cmd;
 
     const char* env = getenv("PATH");
-    int len = 0, count = 1, cmd_len = strlen(cmd);
+    size_t len = 0, count = 1, cmd_len = strlen(cmd);
     const char *p = env;
     while(*p!='\0') {
         if(*p == ':') {
@@ -86,10 +86,10 @@ struct tokens* tokens_create(char *command) {
     struct tokens* ts = (struct tokens*) malloc(sizeof(struct tokens));
     
     ts->cmd_len = strlen(command);
-    ts->command = (char*) malloc(sizeof(char)*(ts->cmd_len+1));
+    ts->command = (char*)malloc(sizeof(char)*(ts->cmd_len+1));
     strcpy(ts->command, command);
 
-    ts->tokens = (char**)malloc(sizeof(char*) * 4096);
+    ts->tokens = (char**)malloc(sizeof(char*)*(ts->cmd_len+1));
     ts->count = split(command, ' ', ts->tokens);
     return ts;
 }
@@ -99,14 +99,11 @@ int tokens_lookup(char* target, struct tokens* tokens) {
     assert((target!=NULL));
 
     char** p = tokens->tokens;
-    int index = 0;
-    while(*p != NULL) {
-        if(strcmp(*p, target) == 0) {
-            return index;
-        }
-        index++;
-        p++;
+    size_t index = 0;
+    for(; *p!=NULL; index++, p++) {
+        if (strcmp(*p, target) == 0) return index;
     }
+
     return -1;
 }
 

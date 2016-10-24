@@ -10,17 +10,15 @@
 #include "builtin.h"
 #include "tokenizer.h"
 
-char input[CMD_MAX_LEN];
-
-pid_t foreground_pid;
-
+#define COMMAND_MAX_LEN 4096
+char line[COMMAND_MAX_LEN];
 
 void dispatch() {
-    getcwd(input, CMD_MAX_LEN);
-    printf("[user@host %s]$ ", input);
-    fgets(input, CMD_MAX_LEN, stdin);
-    input[strlen(input)-1] = '\0';
-    struct tokens *ts = tokens_create(input);
+    getcwd(line, COMMAND_MAX_LEN);
+    printf("[shell %s]$ ", line);
+    fgets(line, COMMAND_MAX_LEN, stdin);
+    line[strlen(line)-1] = '\0';
+    struct tokens *ts = tokens_create(line);
 
     if(tokens_get(ts, 0) == NULL) return;
 
@@ -34,22 +32,22 @@ void dispatch() {
         return;
     }
 
-    int status, is_bg = 0;
+    int is_background = 0;
     if(strcmp(tokens_get(ts, ts->count-1), "&") == 0) {
-        is_bg = 1;
+        is_background = 1;
         ts->tokens[ts->count-1] = NULL;
     }
 
     pid_t pid = fork();
-    if(pid < 0) exit(3);
-    if(pid > 0) {
-        foreground_pid = pid;
-        if(!is_bg){
-
+    if (pid < 0) exit(3);
+    if (pid > 0) {
+        if (is_background) add_background_proc(pid, ts->command);
+        else {
             /* also do this in parent process  */
             setpgid(pid, pid);
             tcsetpgrp(STDIN_FILENO, getpgid(pid));
 
+            int status;
             wait(&status);
 
             /* get terminal control from the shell that started custom shell */
@@ -58,11 +56,9 @@ void dispatch() {
                 exit(1);
             }
         } 
-        else {
-            add_background_proc(pid, ts->command);
-        }
 
         tokens_destroy(ts);
+
     } else if(pid == 0) {
 
         /* set default reaction to signal in child process */
@@ -73,19 +69,8 @@ void dispatch() {
         signal(SIGCHLD, SIG_DFL);
         signal(SIGINT, SIG_DFL);
 
-        if(setpgid(0, 0) < 0) {
-            perror("setpgid");
-            exit(1);
-        }
-
-        /* transfer controlling terminal */
-        if(tcsetpgrp(STDIN_FILENO, getpgrp()) < 0) {
-            perror("tcsetpgrp");
-            exit(1);
-        }
-
         int fd, index;
-        if(is_bg) {
+        if(is_background) {
             fd = open("/dev/null", O_RDONLY);
             dup2(fd, STDIN_FILENO);
         }

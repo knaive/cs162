@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
 
 #include "libhttp.h"
 
@@ -122,6 +123,15 @@ void http_send_data(int fd, char *data, size_t size) {
   }
 }
 
+void http_send_file(int dst_fd, int src_fd) {
+    const int buf_size = 4096;
+    char buf[buf_size];
+    ssize_t bytes_read;
+    while( (bytes_read=read(src_fd, buf, buf_size))!=0) {
+        http_send_data(dst_fd, buf, bytes_read);
+    }
+}
+
 char *http_get_mime_type(char *file_name) {
   char *file_extension = strrchr(file_name, '.');
   if (file_extension == NULL) {
@@ -143,4 +153,11 @@ char *http_get_mime_type(char *file_name) {
   } else {
     return "text/plain";
   }
+}
+
+int get_file_size(int fd) {
+    int saved_pos = lseek(fd, 0, SEEK_CUR);
+    off_t file_size = lseek(fd, 0, SEEK_END);
+    lseek(fd, saved_pos, SEEK_SET);
+    return file_size;
 }

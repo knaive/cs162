@@ -13,7 +13,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <unistd.h>
+#include <stdio.h>
 
 #include "libhttp.h"
 #include "wq.h"
@@ -43,6 +43,25 @@ int server_proxy_port;
  *      of files in the directory with links to each.
  *   4) Send a 404 Not Found response.
  */
+void reply_with_file(int fd, char *path) {
+      http_start_response(fd, 200);
+      http_send_header(fd, "Content-Type", http_get_mime_type(path));
+      int src_fd = open(path,O_RDONLY);
+      int file_size = get_file_size(src_fd);
+      dprintf(fd, "Content-Length: %d\r\n", file_size);
+      http_end_headers(fd);
+      http_send_file(fd, src_fd);
+      close(src_fd);
+}
+
+char *join_strs(char *str1, char *str2) {
+    char *ret = (char *) malloc(strlen(str1) + strlen(str2) + 1);
+    ret[0] = '\0';
+    strcpy(ret, str1);
+    strcpy(ret, str2);
+    return ret;
+}
+
 void handle_files_request(int fd) {
 
   /*
@@ -51,17 +70,47 @@ void handle_files_request(int fd) {
    */
 
   struct http_request *request = http_request_parse(fd);
+  char *full_path = join_strs(server_files_directory, request->path);
 
-  http_start_response(fd, 200);
-  http_send_header(fd, "Content-Type", "text/html");
-  http_end_headers(fd);
-  http_send_string(fd,
-      "<center>"
-      "<h1>Welcome to httpserver!</h1>"
-      "<hr>"
-      "<p>Nothing's here yet.</p>"
-      "</center>");
+  struct stat sb;
+  stat(full_path, &sb);
+  if (S_ISDIR(sb.st_mode)) {
+      DIR *dirp;
+      struct dirent *dp;
+      dirp = opendir(full_path);
+      while((dp = readdir(dirp))!=NULL) {
+          if(strcmp(dp->d_name, "index.html")==0) {
+              char *filename = join_strs(full_path, "/index.html");
+              reply_with_file(fd, filename);
+              free(filename);
+              free(full_path);
+              return;
+          }
+      }
+      closedir(dirp);
+
+      char *template = "<a href=\"../\">Parent directory</a>";
+      http_send_string(fd, template);
+      int template_len = strlen(template);
+      dirp = opendir(full_path);
+      char *temp = NULL;
+      while((dp = readdir(dirp))!=NULL) {
+          temp = (char *) malloc(template_len + 2*dp->d_reclen);
+          sprintf(temp, "<a href=\"./%s\">%s</a>", dp->d_name, dp->d_name);
+          http_send_string(fd, temp);
+          free(temp);
+      }
+  } else {
+      if (access(full_path, F_OK) == -1) {
+          http_start_response(fd, 404);
+          return;
+      }
+
+      reply_with_file(fd, full_path);
+  }
+
 }
+
 
 
 /*

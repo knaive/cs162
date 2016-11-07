@@ -54,61 +54,102 @@ void reply_with_file(int fd, char *path) {
       close(src_fd);
 }
 
-char *join_strs(char *str1, char *str2) {
-    char *ret = (char *) malloc(strlen(str1) + strlen(str2) + 1);
-    ret[0] = '\0';
-    strcpy(ret, str1);
-    strcpy(ret, str2);
+char* join_string(char *str1, char *str2, size_t *size) {
+    char *ret = (char *) malloc(strlen(str1) + strlen(str2) + 1), *p = ret;
+    while((*p = *str1++)) p++;
+    while((*p++ = *str2++));
+    if(size != NULL) *size = (p-ret)*sizeof(char);
     return ret;
+}
+
+char* get_parent_name(char *dir_name) {
+    char* saved = dir_name;
+    while(*dir_name) dir_name++;
+    dir_name--;
+    while(saved != dir_name && *dir_name=='/') dir_name--;
+    while(saved != dir_name && *dir_name--!='/');
+    while(saved != dir_name && *dir_name=='/') dir_name--;
+    *(dir_name+1) = '\0';
+    return saved;
 }
 
 void handle_files_request(int fd) {
 
-  /*
-   * TODO: Your solution for Task 1 goes here! Feel free to delete/modify *
-   * any existing code.
-   */
+    struct http_request *request = http_request_parse(fd);
+    if(request == NULL) {
+        printf("Something went wrong!\n");
+        return;
+    }
+    char *full_path = join_string(server_files_directory, request->path, NULL);
+    printf("%s\n %s\n %s\n", server_files_directory, request->path, full_path);
 
-  struct http_request *request = http_request_parse(fd);
-  char *full_path = join_strs(server_files_directory, request->path);
+    struct stat sb;
+    stat(full_path, &sb);
+    if (S_ISDIR(sb.st_mode)) {
 
-  struct stat sb;
-  stat(full_path, &sb);
-  if (S_ISDIR(sb.st_mode)) {
-      DIR *dirp;
-      struct dirent *dp;
-      dirp = opendir(full_path);
-      while((dp = readdir(dirp))!=NULL) {
-          if(strcmp(dp->d_name, "index.html")==0) {
-              char *filename = join_strs(full_path, "/index.html");
-              reply_with_file(fd, filename);
-              free(filename);
-              free(full_path);
-              return;
-          }
-      }
-      closedir(dirp);
+        DIR *dirp;
+        struct dirent *dp;
+        dirp = opendir(full_path);
+        while((dp = readdir(dirp))!=NULL) {
+            if(strcmp(dp->d_name, "index.html")==0) {
+                char *filename = join_string(full_path, "/index.html", NULL);
+                reply_with_file(fd, filename);
+                free(filename);
+                free(full_path);
+                closedir(dirp);
+                return;
+            }
+        }
+        closedir(dirp);
 
-      char *template = "<a href=\"../\">Parent directory</a>";
-      http_send_string(fd, template);
-      int template_len = strlen(template);
-      dirp = opendir(full_path);
-      char *temp = NULL;
-      while((dp = readdir(dirp))!=NULL) {
-          temp = (char *) malloc(template_len + 2*dp->d_reclen);
-          sprintf(temp, "<a href=\"./%s\">%s</a>", dp->d_name, dp->d_name);
-          http_send_string(fd, temp);
-          free(temp);
-      }
-  } else {
-      if (access(full_path, F_OK) == -1) {
-          http_start_response(fd, 404);
-          return;
-      }
+        char *template = "<html><body><center><p><a href=\"%s\">%s</a></p>";
+        size_t template_len = strlen(template), parent_path_len = strlen(request->path);
+        char *temp = NULL, *saved, *send_buffer = (char *)malloc(1);
+        send_buffer[0] = '\0';
+        dirp = opendir(full_path);
+        char *display_name, *url = (char *)malloc(parent_path_len + 256 + 1);
+        while((dp = readdir(dirp))!=NULL) {
+            if(!strcmp(dp->d_name, ".")) continue;
+            else if(!strcmp(dp->d_name, "..")) {
+                display_name = "Parent Directory";
+                sprintf(url, "/%s", request->path);
+                url = get_parent_name(url);
+            }
+            else {
+                display_name = dp->d_name;
+                sprintf(url, "%s/%s", request->path, dp->d_name);
+            }
+            temp = (char *) malloc(template_len + parent_path_len + 2*dp->d_reclen);
+            sprintf(temp, template, url, display_name);
+            saved = send_buffer;
+            send_buffer = join_string(send_buffer, temp, NULL);
+            free(saved);
+            free(temp);
+        }
+        free(url);
+        saved = send_buffer;
+        size_t content_len;
+        send_buffer = join_string(send_buffer,  "</center></body></html>", &content_len);
+        free(saved);
 
-      reply_with_file(fd, full_path);
-  }
+        http_start_response(fd, 200);
+        http_send_header(fd, "Content-Type", "text/html");
+        dprintf(fd, "Content-Length: %lu\r\n", content_len);
+        http_end_headers(fd);
 
+        http_send_string(fd, send_buffer);
+        closedir(dirp);
+        free(send_buffer);
+
+    } else {
+
+        if (access(full_path, F_OK) == -1) {
+            http_start_response(fd, 404);
+            return;
+        }
+
+        reply_with_file(fd, full_path);
+    }
 }
 
 

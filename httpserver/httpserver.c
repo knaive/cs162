@@ -14,6 +14,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <assert.h>
 
 #include "libhttp.h"
 #include "wq.h"
@@ -55,11 +56,33 @@ void reply_with_file(int fd, char *path) {
 }
 
 char* join_string(char *str1, char *str2, size_t *size) {
+    assert(str1!=NULL && str2!=NULL);
     char *ret = (char *) malloc(strlen(str1) + strlen(str2) + 1), *p = ret;
     while((*p = *str1++)) p++;
     while((*p++ = *str2++));
     if(size != NULL) *size = (p-ret)*sizeof(char);
     return ret;
+}
+
+char* join_path(char *path, char *subpath, size_t *size) {
+    assert(path!=NULL && subpath!=NULL);
+    char *temp = NULL;
+    char *p = path;
+    while(*p) p++;
+    if(p!=path) {
+        if(*(p-1)=='/' && *subpath=='/') *(--p) = '\0';
+        else if(*(p-1)!='/' && *subpath!='/') {
+            temp = (char *)malloc((p-path+2)*sizeof(char));
+            strcpy(temp, path);
+            for(p=temp; *p; p++);
+            *p = '/';
+            *(p+1) = '\0';
+            path = temp;
+        }
+    } 
+    char *full_path = join_string(path, subpath, size);
+    if(temp!=NULL) free(temp);
+    return full_path;
 }
 
 char* get_parent_name(char *dir_name) {
@@ -80,7 +103,7 @@ void handle_files_request(int fd) {
         printf("Something went wrong!\n");
         return;
     }
-    char *full_path = join_string(server_files_directory, request->path, NULL);
+    char *full_path = join_path(server_files_directory, request->path, NULL);
     printf("%s\n %s\n %s\n", server_files_directory, request->path, full_path);
 
     struct stat sb;
@@ -92,7 +115,7 @@ void handle_files_request(int fd) {
         dirp = opendir(full_path);
         while((dp = readdir(dirp))!=NULL) {
             if(strcmp(dp->d_name, "index.html")==0) {
-                char *filename = join_string(full_path, "/index.html", NULL);
+                char *filename = join_path(full_path, "/index.html", NULL);
                 reply_with_file(fd, filename);
                 free(filename);
                 free(full_path);
@@ -117,7 +140,7 @@ void handle_files_request(int fd) {
             }
             else {
                 display_name = dp->d_name;
-                sprintf(url, "%s/%s", request->path, dp->d_name);
+                strcpy(url, join_path(request->path, dp->d_name, NULL));
             }
             temp = (char *) malloc(template_len + parent_path_len + 2*dp->d_reclen);
             sprintf(temp, template, url, display_name);

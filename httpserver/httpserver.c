@@ -58,51 +58,56 @@ void reply_with_file(int fd, char *path) {
 char* join_string(char *str1, char *str2, size_t *size) {
     assert(str1!=NULL && str2!=NULL);
     char *ret = (char *) malloc(strlen(str1) + strlen(str2) + 1), *p = ret;
-    while((*p = *str1++)) p++;
-    while((*p++ = *str2++));
+    for(; (*p=*str1); p++, str1++);
+    for(; (*p=*str2); p++, str2++);
     if(size != NULL) *size = (p-ret)*sizeof(char);
     return ret;
 }
 
 char* join_path(char *path, char *subpath, size_t *size) {
     assert(path!=NULL && subpath!=NULL);
-    char *temp = NULL;
-    char *p = path;
-    while(*p) p++;
-    if(p!=path) {
-        if(*(p-1)=='/' && *subpath=='/') *(--p) = '\0';
-        else if(*(p-1)!='/' && *subpath!='/') {
-            temp = (char *)malloc((p-path+2)*sizeof(char));
-            strcpy(temp, path);
-            for(p=temp; *p; p++);
-            *p = '/';
-            *(p+1) = '\0';
-            path = temp;
-        }
-    } 
-    char *full_path = join_string(path, subpath, size);
-    if(temp!=NULL) free(temp);
-    return full_path;
+    int path_len = strlen(path), subpath_len = strlen(subpath);
+    char *fullpath = (char *) malloc(path_len+subpath_len+2), *p = fullpath;
+    char prev = '\0';
+    for(; *path; path++) {
+        if(*path==prev && prev=='/') continue;
+        *p = *path;
+        prev = *path;
+        p++;
+    }
+    if(prev!='/') {
+        *p++ = '/';
+        prev = '/';
+    }
+    for(; *subpath; subpath++) {
+        if(*subpath==prev && prev=='/') continue;
+        *p = *subpath;
+        prev = *subpath;
+        p++;
+    }
+    *p = '\0';
+    if(size!=NULL) *size = (p-fullpath)*sizeof(char);
+    return fullpath;
 }
 
 char* get_parent_name(char *dir_name) {
-    char* saved = dir_name;
-    while(*dir_name) dir_name++;
-    dir_name--;
-    while(saved != dir_name && *dir_name=='/') dir_name--;
-    while(saved != dir_name && *dir_name--!='/');
-    while(saved != dir_name && *dir_name=='/') dir_name--;
-    *(dir_name+1) = '\0';
-    return saved;
+    size_t size;
+    char *fullpath = join_path(dir_name, "/", &size);
+    if(size <= 1) return fullpath;
+
+    char *p = fullpath+size-2; 
+    while(p!=fullpath && *p!='/') p--; 
+    *p++ = '/';
+    *p = '\0';
+    return fullpath;
 }
 
 void handle_files_request(int fd) {
 
     struct http_request *request = http_request_parse(fd);
-    if(request == NULL) {
-        printf("Something went wrong!\n");
-        return;
-    }
+
+    if(request == NULL) return;
+
     char *full_path = join_path(server_files_directory, request->path, NULL);
     printf("%s\n %s\n %s\n", server_files_directory, request->path, full_path);
 
@@ -130,17 +135,15 @@ void handle_files_request(int fd) {
         char *temp = NULL, *saved, *send_buffer = (char *)malloc(1);
         send_buffer[0] = '\0';
         dirp = opendir(full_path);
-        char *display_name, *url = (char *)malloc(parent_path_len + 256 + 1);
+        char *display_name, *url;
         while((dp = readdir(dirp))!=NULL) {
             if(!strcmp(dp->d_name, ".")) continue;
             else if(!strcmp(dp->d_name, "..")) {
                 display_name = "Parent Directory";
-                sprintf(url, "/%s", request->path);
-                url = get_parent_name(url);
-            }
-            else {
+                url = get_parent_name(request->path);
+            } else {
                 display_name = dp->d_name;
-                strcpy(url, join_path(request->path, dp->d_name, NULL));
+                url = join_path(request->path, dp->d_name, NULL);
             }
             temp = (char *) malloc(template_len + parent_path_len + 2*dp->d_reclen);
             sprintf(temp, template, url, display_name);
@@ -148,8 +151,8 @@ void handle_files_request(int fd) {
             send_buffer = join_string(send_buffer, temp, NULL);
             free(saved);
             free(temp);
+            free(url);
         }
-        free(url);
         saved = send_buffer;
         size_t content_len;
         send_buffer = join_string(send_buffer,  "</center></body></html>", &content_len);

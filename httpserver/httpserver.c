@@ -109,7 +109,7 @@ void handle_files_request(int fd) {
     if(request == NULL) return;
 
     char *full_path = join_path(server_files_directory, request->path, NULL);
-    printf("%s\n %s\n %s\n", server_files_directory, request->path, full_path);
+    /* printf("%s\n %s\n %s\n", server_files_directory, request->path, full_path); */
 
     struct stat sb;
     stat(full_path, &sb);
@@ -180,7 +180,10 @@ void handle_files_request(int fd) {
 
 void* request_handle_thread(void *unused) {
     while(1){
-        handle_files_request(wq_pop(&work_queue));
+        int req_fd = wq_pop(&work_queue);
+        printf("Process %d, thread %lu will handle request.\n", getpid(),  pthread_self());
+        handle_files_request(req_fd);
+        close(req_fd);
     }
 }
 
@@ -262,8 +265,8 @@ void serve_forever(int *socket_number, void (*request_handler)(int)) {
                 client_address.sin_port);
 
         /* request_handler(client_socket_number); */
+        /* close(client_socket_number); */
         wq_push(&work_queue, client_socket_number);
-        close(client_socket_number);
     }
 
     shutdown(*socket_number, SHUT_RDWR);
@@ -338,7 +341,7 @@ int main(int argc, char **argv) {
             pthread_t *threads = (pthread_t *) malloc(sizeof(pthread_t)*num_threads);
             pthread_t *p = threads;
             wq_init(&work_queue);
-            for(int i=0 ; i<num_threads; i++) {
+            for(int i=0 ; i<num_threads; i++, p++) {
                 pthread_create(p, NULL, request_handle_thread, NULL);
             }
         } else if (strcmp("--help", argv[i]) == 0) {

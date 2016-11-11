@@ -18,7 +18,7 @@ void wq_init(wq_t *wq) {
 int wq_pop(wq_t *wq) {
 
     pthread_mutex_lock(&mutex);
-    if(!wq->size) pthread_cond_wait(&cond, &mutex);
+    while(!wq->size) pthread_cond_wait(&cond, &mutex);
 
     wq_item_t *wq_item = wq->head;
     int client_socket_fd = wq->head->client_socket_fd;

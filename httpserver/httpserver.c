@@ -103,10 +103,9 @@ char* get_parent_name(char *dir_name) {
 }
 
 void handle_files_request(int fd) {
-
     struct http_request *request = http_request_parse(fd);
 
-    if(request == NULL) return;
+    if(request == NULL) goto EXIT;
 
     char *full_path = join_path(server_files_directory, request->path, NULL);
     /* printf("%s\n %s\n %s\n", server_files_directory, request->path, full_path); */
@@ -125,7 +124,7 @@ void handle_files_request(int fd) {
                 free(filename);
                 free(full_path);
                 closedir(dirp);
-                return;
+                goto EXIT;
             }
         }
         closedir(dirp);
@@ -166,16 +165,15 @@ void handle_files_request(int fd) {
         http_send_string(fd, send_buffer);
         closedir(dirp);
         free(send_buffer);
-
     } else {
-
         if (access(full_path, F_OK) == -1) {
             http_start_response(fd, 404);
-            return;
+            goto EXIT;
         }
 
         reply_with_file(fd, full_path);
     }
+EXIT: close(fd);
 }
 
 void* request_handle_thread(void *unused) {
@@ -183,10 +181,73 @@ void* request_handle_thread(void *unused) {
         int req_fd = wq_pop(&work_queue);
         printf("Process %d, thread %lu will handle request.\n", getpid(),  pthread_self());
         handle_files_request(req_fd);
-        close(req_fd);
     }
 }
 
+void thread_pool_handler(int fd) {
+    wq_push(&work_queue, fd);
+}
+
+int create_server_socket() {
+    struct sockaddr_in server_address;
+    int socket_number = socket(PF_INET, SOCK_STREAM, 0);
+    if (socket_number == -1) {
+        perror("Failed to create a new socket");
+        exit(errno);
+    }
+
+    int socket_option = 1;
+    if (setsockopt(socket_number, SOL_SOCKET, SO_REUSEADDR, &socket_option,
+                sizeof(socket_option)) == -1) {
+        perror("Failed to set socket options");
+        exit(errno);
+    }
+
+    memset(&server_address, 0, sizeof(server_address));
+    server_address.sin_family = AF_INET;
+    server_address.sin_addr.s_addr = INADDR_ANY;
+    server_address.sin_port = htons(server_port);
+
+    if (bind(socket_number, (struct sockaddr *) &server_address,
+                sizeof(server_address)) == -1) {
+        perror("Failed to bind on socket");
+        exit(errno);
+    }
+    return socket_number;
+}
+
+int create_client_socket(char *server_hostname, int server_port) {
+    int fd = socket(PF_INET, SOCK_STREAM, 0);
+    if (fd = -1) {
+        perror("Failed to create a new socket");
+        exit(errno);
+    }
+
+    /* get ip address of server_hostname */
+    struct hostent* ent = gethostbyname(server_hostname);
+    if(ent == NULL || ent->h_addr_list == NULL) {
+        perror("Failed to get host ip");
+        exit(errno);
+    }
+    struct in_addr** addr = (struct in_addr**)ent->h_addr_list;
+
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr= *addr[0];
+    server_addr.sin_port = htons(server_port);
+
+    if((connect(fd, (struct sockaddr*)server_addr, sizeof(struct sockaddr)))!=0) {
+        perror("Failed to connect server");
+        exit(errno);
+    }
+
+    return fd;
+}
+
+struct fd_pair fd_pair_head;
+fd_set client_fd;
+fd_set target_fd;
 
 /*
  * Opens a connection to the proxy target (hostname=server_proxy_hostname and
@@ -208,46 +269,22 @@ void handle_proxy_request(int fd) {
 
 }
 
-
 /*
  * Opens a TCP stream socket on all interfaces with port number PORTNO. Saves
  * the fd number of the server socket in *socket_number. For each accepted
  * connection, calls request_handler with the accepted fd number.
  */
 void serve_forever(int *socket_number, void (*request_handler)(int)) {
-
-    struct sockaddr_in server_address, client_address;
+    struct sockaddr_in client_address;
     size_t client_address_length = sizeof(client_address);
     int client_socket_number;
-
-    *socket_number = socket(PF_INET, SOCK_STREAM, 0);
-    if (*socket_number == -1) {
-        perror("Failed to create a new socket");
-        exit(errno);
-    }
-
-    int socket_option = 1;
-    if (setsockopt(*socket_number, SOL_SOCKET, SO_REUSEADDR, &socket_option,
-                sizeof(socket_option)) == -1) {
-        perror("Failed to set socket options");
-        exit(errno);
-    }
-
-    memset(&server_address, 0, sizeof(server_address));
-    server_address.sin_family = AF_INET;
-    server_address.sin_addr.s_addr = INADDR_ANY;
-    server_address.sin_port = htons(server_port);
-
-    if (bind(*socket_number, (struct sockaddr *) &server_address,
-                sizeof(server_address)) == -1) {
-        perror("Failed to bind on socket");
-        exit(errno);
-    }
 
     if (listen(*socket_number, 1024) == -1) {
         perror("Failed to listen on socket");
         exit(errno);
     }
+
+    create_server_socket(socket_number);
 
     printf("Listening on port %d...\n", server_port);
 
@@ -264,9 +301,7 @@ void serve_forever(int *socket_number, void (*request_handler)(int)) {
                 inet_ntoa(client_address.sin_addr),
                 client_address.sin_port);
 
-        /* request_handler(client_socket_number); */
-        /* close(client_socket_number); */
-        wq_push(&work_queue, client_socket_number);
+        request_handler(client_socket_number);
     }
 
     shutdown(*socket_number, SHUT_RDWR);
@@ -333,6 +368,7 @@ int main(int argc, char **argv) {
             }
             server_port = atoi(server_port_string);
         } else if (strcmp("--num-threads", argv[i]) == 0) {
+            request_handler = thread_pool_handler;
             char *num_threads_str = argv[++i];
             if (!num_threads_str || (num_threads = atoi(num_threads_str)) < 1) {
                 fprintf(stderr, "Expected positive integer after --num-threads\n");

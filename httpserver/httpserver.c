@@ -17,6 +17,7 @@
 #include <assert.h>
 
 #include "libhttp.h"
+#include "liblist.h"
 #include "wq.h"
 
 /*
@@ -218,7 +219,7 @@ int create_server_socket() {
 
 int create_client_socket(char *server_hostname, int server_port) {
     int fd = socket(PF_INET, SOCK_STREAM, 0);
-    if (fd = -1) {
+    if (fd == -1) {
         perror("Failed to create a new socket");
         exit(errno);
     }
@@ -237,17 +238,13 @@ int create_client_socket(char *server_hostname, int server_port) {
     server_addr.sin_addr= *addr[0];
     server_addr.sin_port = htons(server_port);
 
-    if((connect(fd, (struct sockaddr*)server_addr, sizeof(struct sockaddr)))!=0) {
+    if((connect(fd, (struct sockaddr*)&server_addr, sizeof(struct sockaddr)))!=0) {
         perror("Failed to connect server");
         exit(errno);
     }
 
     return fd;
 }
-
-struct fd_pair fd_pair_head;
-fd_set client_fd;
-fd_set target_fd;
 
 /*
  * Opens a connection to the proxy target (hostname=server_proxy_hostname and
@@ -260,13 +257,36 @@ fd_set target_fd;
  *   | client | <-> | httpserver | <-> | proxy target |
  *   +--------+     +------------+     +--------------+
  */
+void* handle_proxy_request_thread(void* arg) {
+    int fd = *(int *)arg;
+    char buffer[4096];
+    struct http_request *request = http_request_parse(fd);
+    if(request == NULL) goto EXIT;
+
+    int proxy_target_fd = create_client_socket(server_proxy_hostname, server_proxy_port);
+    memset(buffer, '\0', sizeof(buffer));
+    sprintf(buffer, "%s %s HTTP/1.0\r\nHost: %s:%d\r\nConnection: close\r\n\r\n", request->method, \
+            request->path, server_proxy_hostname, server_proxy_port);
+    http_send_string(proxy_target_fd, buffer);
+
+    int size = 0;
+    while((size=read(fd, buffer, sizeof(buffer)-1))>0) {
+        buffer[size] = '\0';
+        http_send_string(proxy_target_fd, buffer);
+    }
+
+EXIT:
+    close(fd);
+    close(proxy_target_fd);
+    return NULL;
+}
+
 void handle_proxy_request(int fd) {
-
-  /*
-   * TODO: Your solution for Task 3 goes here! Feel free to delete/modify *
-   * any existing code.
-   */
-
+    pthread_t t;
+    if(pthread_create(&t, NULL, handle_proxy_request_thread, (void*) &fd)) {
+        perror("Failed to create a thread");
+        exit(1);
+    }
 }
 
 /*

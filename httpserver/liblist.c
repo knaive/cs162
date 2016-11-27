@@ -2,11 +2,13 @@
 
 void insert(struct fd_pair* head, struct fd_pair* p) {
     assert(head!=NULL);
+    static struct fd_pair* tail = NULL;
 
-    while(head->next!=NULL) {
-        head = head->next;
+    if(tail == NULL) {
+        while(head->next!=NULL) head = head->next;
+        tail = head;
     }
-    head->next = p;
+    tail->next = p;
     p->next = NULL;
 }
 

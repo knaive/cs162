@@ -274,10 +274,10 @@ void* handle_proxy_request_thread(void* arg) {
         buffer[size] = '\0';
         http_send_string(proxy_target_fd, buffer);
     }
+    close(proxy_target_fd);
 
 EXIT:
     close(fd);
-    close(proxy_target_fd);
     return NULL;
 }
 
@@ -299,12 +299,11 @@ void serve_forever(int *socket_number, void (*request_handler)(int)) {
     size_t client_address_length = sizeof(client_address);
     int client_socket_number;
 
+    *socket_number = create_server_socket();
     if (listen(*socket_number, 1024) == -1) {
         perror("Failed to listen on socket");
         exit(errno);
     }
-
-    create_server_socket(socket_number);
 
     printf("Listening on port %d...\n", server_port);
 

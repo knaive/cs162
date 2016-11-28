@@ -2,10 +2,10 @@
 <html>
 <head>
     <meta charset="UTF-8" />
-    <title>CS 162 is the best</title>
+    <title>A Get-only Website</title>
     <style type="text/css">
         html, body {
-            background-color: #2F4;
+            background-color: gray;
             cursor: wait;
             font: 24px 'Comic Sans MS', sans-serif;
             height: 100%;
@@ -16,7 +16,7 @@
         }
         marquee {
             font: 72px serif;
-            background: black;
+            background: white;
             margin: 0;
         }
         .rainbow {
@@ -27,47 +27,47 @@
             background-clip: text;
         }
         .site-navigation {
-            background: #00F;
+            background: silver;
         }
         .site-navigation a {
             display: inline-block;
             margin: 1em 3em;
-            color: #EEE;
+            color: purple;
             text-decoration: none;
         }
         .site-navigation a:hover {
-            color: #F24;
+            color: green;
         }
         .site-icon {
             display: inline-block;
-            font-size: 144px;
-            line-height: 144px;
+            font-size: 100px;
+            line-height: 300px;
         }
         .site-content {
             padding: 2em;
         }
-        .site-content.var-pink {
-            background: #F6B;
-            color: #BF6;
+        .site-content.var-gray {
+            background: gray;
+            color: white;
         }
-        .site-content.var-orange {
-            background: #FA0;
-            color: #518;
+        .site-content.var-silver {
+            background: silver;
+            color: white;
         }
         @-webkit-keyframes flashing {
             from {
-                color: #F06;
+                color: gray;
             }
             to {
-                color: #60F;
+                color: white;
             }
         }
         @keyframes flashing {
             from {
-                color: #F06;
+                color: gray;
             }
             to {
-                color: #60F;
+                color: white;
             }
         }
         .flashing {
@@ -119,18 +119,19 @@
     </style>
 </head>
 <body>
-    <marquee scrollamount="30">
-        <span class="rainbow">CS 162 IS THE BEST</span>
-    </marquee>
-    <h1 class="site-title flashing">WELCOME TO MY WEBSITE</h1>
+    <!-- <marquee scrollamount="30"> -->
+        <!-- <span class="rainbow">Simple Website</span> -->
+    <!-- </marquee> -->
+    <h1 class="site-title">WELCOME TO MY WEBSITE</h1>
     <nav class="site-navigation">
         <a href="">HOME</a>
         <a href="my_documents/">SEE MY FILES</a>
     </nav>
-    <div class="site-content var-pink">
-        <p class="site-icon rotating">CS162</p>
+    <div class="site-content var-gray">
+        <!-- <p class="site-icon rotating">CS162</p> -->
+        <p class="site-icon">A Get-only Web Server</p>
     </div>
-    <footer class="site-content var-orange">
+    <footer class="site-content var-silver">
         <p>Created with WEB 4.0 HTML6 CLOUD.</p>
     </footer>
 </body>

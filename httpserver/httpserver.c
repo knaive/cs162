@@ -189,6 +189,7 @@ void thread_pool_handler(int fd) {
     wq_push(&work_queue, fd);
 }
 
+/* create a server socket so that we can accept client connections */
 int create_server_socket() {
     struct sockaddr_in server_address;
     int socket_number = socket(PF_INET, SOCK_STREAM, 0);
@@ -217,6 +218,7 @@ int create_server_socket() {
     return socket_number;
 }
 
+/* create a socket connected to remote server */
 int create_client_socket(char *server_hostname, int server_port) {
     int fd = socket(PF_INET, SOCK_STREAM, 0);
     if (fd == -1) {
@@ -257,7 +259,9 @@ int create_client_socket(char *server_hostname, int server_port) {
  *   | client | <-> | httpserver | <-> | proxy target |
  *   +--------+     +------------+     +--------------+
  */
-void* handle_proxy_request_thread(void* arg) {
+
+/* A simple proxy that only serves a request per connection */
+void* simple_proxy(void* arg) {
     int fd = *(int *)arg;
     char buffer[4096];
     struct http_request *request = http_request_parse(fd);
@@ -270,9 +274,9 @@ void* handle_proxy_request_thread(void* arg) {
     http_send_string(proxy_target_fd, buffer);
 
     int size = 0;
-    while((size=read(fd, buffer, sizeof(buffer)-1))>0) {
+    while((size=read(proxy_target_fd, buffer, sizeof(buffer)-1))>0) {
         buffer[size] = '\0';
-        http_send_string(proxy_target_fd, buffer);
+        http_send_string(fd, buffer);
     }
     close(proxy_target_fd);
 
@@ -283,7 +287,7 @@ EXIT:
 
 void handle_proxy_request(int fd) {
     pthread_t t;
-    if(pthread_create(&t, NULL, handle_proxy_request_thread, (void*) &fd)) {
+    if(pthread_create(&t, NULL, simple_proxy, (void*) &fd)) {
         perror("Failed to create a thread");
         exit(1);
     }

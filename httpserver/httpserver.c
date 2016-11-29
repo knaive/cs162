@@ -13,18 +13,14 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <stdio.h>
 #include <assert.h>
 
 #include "libhttp.h"
-#include "liblist.h"
+#include "util.h"
 #include "wq.h"
 
 /*
  * Global configuration variables.
- * You need to use these in your implementation of handle_files_request and
- * handle_proxy_request. Their values are set up in main() using the
- * command line arguments (already implemented for you).
  */
 wq_t work_queue;
 int num_threads;
@@ -32,7 +28,6 @@ int server_port;
 char *server_files_directory;
 char *server_proxy_hostname;
 int server_proxy_port;
-
 
 /*
  * Reads an HTTP request from stream (fd), and writes an HTTP response
@@ -45,63 +40,6 @@ int server_proxy_port;
  *      of files in the directory with links to each.
  *   4) Send a 404 Not Found response.
  */
-void reply_with_file(int fd, char *path) {
-    http_start_response(fd, 200);
-    http_send_header(fd, "Content-Type", http_get_mime_type(path));
-    int src_fd = open(path,O_RDONLY);
-    int file_size = get_file_size(src_fd);
-    dprintf(fd, "Content-Length: %d\r\n", file_size);
-    http_end_headers(fd);
-    http_send_file(fd, src_fd);
-    close(src_fd);
-}
-
-char* join_string(char *str1, char *str2, size_t *size) {
-    assert(str1!=NULL && str2!=NULL);
-    char *ret = (char *) malloc(strlen(str1) + strlen(str2) + 1), *p = ret;
-    for(; (*p=*str1); p++, str1++);
-    for(; (*p=*str2); p++, str2++);
-    if(size != NULL) *size = (p-ret)*sizeof(char);
-    return ret;
-}
-
-char* join_path(char *path, char *subpath, size_t *size) {
-    assert(path!=NULL && subpath!=NULL);
-    int path_len = strlen(path), subpath_len = strlen(subpath);
-    char *fullpath = (char *) malloc(path_len+subpath_len+2), *p = fullpath;
-    char prev = '\0';
-    for(; *path; path++) {
-        if(*path==prev && prev=='/') continue;
-        *p = *path;
-        prev = *path;
-        p++;
-    }
-    if(prev!='/') {
-        *p++ = '/';
-        prev = '/';
-    }
-    for(; *subpath; subpath++) {
-        if(*subpath==prev && prev=='/') continue;
-        *p = *subpath;
-        prev = *subpath;
-        p++;
-    }
-    *p = '\0';
-    if(size!=NULL) *size = (p-fullpath)*sizeof(char);
-    return fullpath;
-}
-
-char* get_parent_name(char *dir_name) {
-    size_t size;
-    char *fullpath = join_path(dir_name, "/", &size);
-    if(size <= 1) return fullpath;
-
-    char *p = fullpath+size-2; 
-    while(p!=fullpath && *p!='/') p--; 
-    *p++ = '/';
-    *p = '\0';
-    return fullpath;
-}
 
 void handle_files_request(int fd) {
     struct http_request *request = http_request_parse(fd);
@@ -177,7 +115,7 @@ void handle_files_request(int fd) {
 EXIT: close(fd);
 }
 
-void* request_handle_thread(void *unused) {
+void* file_request_handler(void* unused) {
     while(1){
         int req_fd = wq_pop(&work_queue);
         printf("Process %d, thread %lu will handle request.\n", getpid(),  pthread_self());
@@ -185,68 +123,10 @@ void* request_handle_thread(void *unused) {
     }
 }
 
-void thread_pool_handler(int fd) {
+void dispatch_file_request(int fd) {
     wq_push(&work_queue, fd);
 }
 
-/* create a server socket so that we can accept client connections */
-int create_server_socket() {
-    struct sockaddr_in server_address;
-    int socket_number = socket(PF_INET, SOCK_STREAM, 0);
-    if (socket_number == -1) {
-        perror("Failed to create a new socket");
-        exit(errno);
-    }
-
-    int socket_option = 1;
-    if (setsockopt(socket_number, SOL_SOCKET, SO_REUSEADDR, &socket_option,
-                sizeof(socket_option)) == -1) {
-        perror("Failed to set socket options");
-        exit(errno);
-    }
-
-    memset(&server_address, 0, sizeof(server_address));
-    server_address.sin_family = AF_INET;
-    server_address.sin_addr.s_addr = INADDR_ANY;
-    server_address.sin_port = htons(server_port);
-
-    if (bind(socket_number, (struct sockaddr *) &server_address,
-                sizeof(server_address)) == -1) {
-        perror("Failed to bind on socket");
-        exit(errno);
-    }
-    return socket_number;
-}
-
-/* create a socket connected to remote server */
-int create_client_socket(char *server_hostname, int server_port) {
-    int fd = socket(PF_INET, SOCK_STREAM, 0);
-    if (fd == -1) {
-        perror("Failed to create a new socket");
-        exit(errno);
-    }
-
-    /* get ip address of server_hostname */
-    struct hostent* ent = gethostbyname(server_hostname);
-    if(ent == NULL || ent->h_addr_list == NULL) {
-        perror("Failed to get host ip");
-        exit(errno);
-    }
-    struct in_addr** addr = (struct in_addr**)ent->h_addr_list;
-
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr= *addr[0];
-    server_addr.sin_port = htons(server_port);
-
-    if((connect(fd, (struct sockaddr*)&server_addr, sizeof(struct sockaddr)))!=0) {
-        perror("Failed to connect server");
-        exit(errno);
-    }
-
-    return fd;
-}
 
 /*
  * Opens a connection to the proxy target (hostname=server_proxy_hostname and
@@ -259,6 +139,86 @@ int create_client_socket(char *server_hostname, int server_port) {
  *   | client | <-> | httpserver | <-> | proxy target |
  *   +--------+     +------------+     +--------------+
  */
+/* create a socket connected to remote server */
+int connect_to_host(char *hostname, int port) {
+    int fd = socket(PF_INET, SOCK_STREAM, 0);
+    if (fd == -1) {
+        perror("Failed to create a new socket");
+        exit(errno);
+    }
+
+    /* get ip address of hostname */
+    struct hostent* ent = gethostbyname(hostname);
+    if(ent == NULL || ent->h_addr_list == NULL) {
+        perror("Failed to get host ip");
+        exit(errno);
+    }
+    struct in_addr** addr = (struct in_addr**)ent->h_addr_list;
+
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr= *addr[0];
+    server_addr.sin_port = htons(port);
+
+    if((connect(fd, (struct sockaddr*)&server_addr, sizeof(struct sockaddr)))!=0) {
+        perror("Failed to connect server");
+        exit(errno);
+    }
+
+    return fd;
+}
+
+struct fd_pair {
+    int read_fd;
+    int write_fd;
+};
+
+void* relay_message(void* endpoints) {
+    struct fd_pair* pair = (struct fd_pair*)endpoints;   
+    int src_fd = pair->read_fd;
+    int dst_fd = pair->write_fd;
+    printf("src fd: %d, dst fd: %d\n", src_fd, dst_fd);
+    char buffer[4096];
+    int size = 0;
+    while((size=read(src_fd, buffer, sizeof(buffer)-1))>0) {
+        buffer[size] = '\0';
+        printf("%s\n", buffer);
+        http_send_string(dst_fd, buffer);
+    }
+    return NULL;
+}
+
+void* proxy_request_handler(void* unused) {
+    while(1){
+        int req_fd = wq_pop(&work_queue);
+        printf("Process %d, thread %lu will handle proxy request.\n", getpid(),  pthread_self());
+        int target_fd = connect_to_host(server_proxy_hostname, server_proxy_port);
+
+        struct fd_pair pairs[2];
+        pairs[0].read_fd = req_fd;
+        pairs[0].write_fd = target_fd;
+        pairs[1].read_fd = target_fd;
+        pairs[1].write_fd = req_fd;
+
+        pthread_t threads[2];
+        int i = 0;
+        for(; i<2; i++) {
+            pthread_create(threads+i, NULL, relay_message, pairs+i);
+        }
+
+        for(i=0; i<2; i++) {
+            pthread_join(*(threads+i), NULL);
+        }
+        close(req_fd);
+        close(target_fd);
+    }
+    return NULL;
+}
+
+void dispatch_proxy_request(int fd) {
+    wq_push(&work_queue, fd);
+}
 
 /* A simple proxy that only serves a request per connection */
 void* simple_proxy(void* arg) {
@@ -267,7 +227,7 @@ void* simple_proxy(void* arg) {
     struct http_request *request = http_request_parse(fd);
     if(request == NULL) goto EXIT;
 
-    int proxy_target_fd = create_client_socket(server_proxy_hostname, server_proxy_port);
+    int proxy_target_fd = connect_to_host(server_proxy_hostname, server_proxy_port);
     memset(buffer, '\0', sizeof(buffer));
     sprintf(buffer, "%s %s HTTP/1.0\r\nHost: %s:%d\r\nConnection: close\r\n\r\n", request->method, \
             request->path, server_proxy_hostname, server_proxy_port);
@@ -285,12 +245,41 @@ EXIT:
     return NULL;
 }
 
-void handle_proxy_request(int fd) {
+void dispatch_proxy_request_s(int fd) {
     pthread_t t;
     if(pthread_create(&t, NULL, simple_proxy, (void*) &fd)) {
         perror("Failed to create a thread");
         exit(1);
     }
+}
+
+/* create a server socket so that we can accept client connections */
+int create_server_socket(int port) {
+    struct sockaddr_in server_address;
+    int socket_number = socket(PF_INET, SOCK_STREAM, 0);
+    if (socket_number == -1) {
+        perror("Failed to create a new socket");
+        exit(errno);
+    }
+
+    int socket_option = 1;
+    if (setsockopt(socket_number, SOL_SOCKET, SO_REUSEADDR, &socket_option,
+                sizeof(socket_option)) == -1) {
+        perror("Failed to set socket options");
+        exit(errno);
+    }
+
+    memset(&server_address, 0, sizeof(server_address));
+    server_address.sin_family = AF_INET;
+    server_address.sin_addr.s_addr = INADDR_ANY;
+    server_address.sin_port = htons(port);
+
+    if (bind(socket_number, (struct sockaddr *) &server_address,
+                sizeof(server_address)) == -1) {
+        perror("Failed to bind on socket");
+        exit(errno);
+    }
+    return socket_number;
 }
 
 /*
@@ -303,7 +292,7 @@ void serve_forever(int *socket_number, void (*request_handler)(int)) {
     size_t client_address_length = sizeof(client_address);
     int client_socket_number;
 
-    *socket_number = create_server_socket();
+    *socket_number = create_server_socket(server_port);
     if (listen(*socket_number, 1024) == -1) {
         perror("Failed to listen on socket");
         exit(errno);
@@ -353,21 +342,20 @@ int main(int argc, char **argv) {
 
     /* Default settings */
     server_port = 8000;
+    num_threads = 1;
     void (*request_handler)(int) = NULL;
+    void* (*thread_pool_worker)(void*) = NULL;
 
     int i;
+    int simple_proxy = 0;
     for (i = 1; i < argc; i++) {
         if (strcmp("--files", argv[i]) == 0) {
-            request_handler = handle_files_request;
-            free(server_files_directory);
             server_files_directory = argv[++i];
             if (!server_files_directory) {
                 fprintf(stderr, "Expected argument after --files\n");
                 exit_with_usage();
             }
         } else if (strcmp("--proxy", argv[i]) == 0) {
-            request_handler = handle_proxy_request;
-
             char *proxy_target = argv[++i];
             if (!proxy_target) {
                 fprintf(stderr, "Expected argument after --proxy\n");
@@ -391,18 +379,13 @@ int main(int argc, char **argv) {
             }
             server_port = atoi(server_port_string);
         } else if (strcmp("--num-threads", argv[i]) == 0) {
-            request_handler = thread_pool_handler;
             char *num_threads_str = argv[++i];
             if (!num_threads_str || (num_threads = atoi(num_threads_str)) < 1) {
                 fprintf(stderr, "Expected positive integer after --num-threads\n");
                 exit_with_usage();
             }
-            pthread_t *threads = (pthread_t *) malloc(sizeof(pthread_t)*num_threads);
-            pthread_t *p = threads;
-            wq_init(&work_queue);
-            for(int i=0 ; i<num_threads; i++, p++) {
-                pthread_create(p, NULL, request_handle_thread, NULL);
-            }
+        } else if (strcmp("--simple-proxy", argv[i]) == 0){
+            simple_proxy = 1;
         } else if (strcmp("--help", argv[i]) == 0) {
             exit_with_usage();
         } else {
@@ -415,6 +398,25 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Please specify either \"--files [DIRECTORY]\" or \n"
                 "                      \"--proxy [HOSTNAME:PORT]\"\n");
         exit_with_usage();
+    } else if(server_files_directory != NULL){
+        request_handler = dispatch_file_request;
+        thread_pool_worker = file_request_handler;
+    } else if(server_proxy_hostname != NULL) {
+        request_handler = dispatch_proxy_request;
+        thread_pool_worker = proxy_request_handler;
+        if(simple_proxy) {
+            request_handler = dispatch_proxy_request_s;
+            thread_pool_worker = NULL;
+        }
+    }
+
+    if(num_threads && thread_pool_worker) {
+        pthread_t *threads = (pthread_t *) malloc(sizeof(pthread_t)*num_threads);
+        pthread_t *p = threads;
+        wq_init(&work_queue);
+        for(int i=0 ; i<num_threads; i++, p++) {
+            pthread_create(p, NULL, thread_pool_worker, NULL);
+        }
     }
 
     serve_forever(&server_fd, request_handler);

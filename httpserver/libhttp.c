@@ -1,4 +1,7 @@
 #include <errno.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -168,9 +171,22 @@ char *http_get_mime_type(char *file_name) {
     }
 }
 
-int get_file_size(int fd) {
+/* get a the size of the file specified by file descriptor fd */
+static int get_file_size(int fd) {
     int saved_pos = lseek(fd, 0, SEEK_CUR);
     off_t file_size = lseek(fd, 0, SEEK_END);
     lseek(fd, saved_pos, SEEK_SET);
     return file_size;
+}
+
+/* send a http response to socket fd with a file specified by path as body */
+void reply_with_file(int fd, char *path) {
+    http_start_response(fd, 200);
+    http_send_header(fd, "Content-Type", http_get_mime_type(path));
+    int src_fd = open(path,O_RDONLY);
+    int file_size = get_file_size(src_fd);
+    dprintf(fd, "Content-Length: %d\r\n", file_size);
+    http_end_headers(fd);
+    http_send_file(fd, src_fd);
+    close(src_fd);
 }

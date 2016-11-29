@@ -13,6 +13,7 @@
  *     http_send_header(fd, "Server", "httpserver/1.0");
  *     http_end_headers(fd);
  *     http_send_string(fd, "<html><body><a href='/'>Home</a></body></html>");
+ *     reply_with_file(fd, "/path/to/index.html")
  *
  *     close(fd);
  */
@@ -39,7 +40,7 @@ void http_end_headers(int fd);
 void http_send_string(int fd, char *data);
 void http_send_data(int fd, char *data, size_t size);
 void http_send_file(int dst_fd, int src_fd);
-int get_file_size(int fd);
+void reply_with_file(int fd, char *path); 
 
 /*
  * Helper function: gets the Content-Type based on a file name.

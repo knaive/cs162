@@ -1,7 +1,7 @@
 CC=gcc
 CFLAGS=-ggdb3 -c -Wall -std=gnu99
 LDFLAGS=-pthread
-SOURCES=httpserver.c libhttp.c wq.c
+SOURCES=httpserver.c libhttp.c util.c wq.c
 OBJECTS=$(SOURCES:.c=.o)
 EXECUTABLE=httpserver
 

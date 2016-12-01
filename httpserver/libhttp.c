@@ -124,28 +124,32 @@ void http_end_headers(int fd) {
     dprintf(fd, "\r\n");
 }
 
-void http_send_string(int fd, char *data) {
-    http_send_data(fd, data, strlen(data));
+int http_send_string(int fd, char *data) {
+    return http_send_data(fd, data, strlen(data));
 }
 
-void http_send_data(int fd, char *data, size_t size) {
+int http_send_data(int fd, char *data, size_t size) {
     ssize_t bytes_sent;
     while (size > 0) {
         bytes_sent = write(fd, data, size);
         if (bytes_sent < 0)
-            return;
+            return bytes_sent;
         size -= bytes_sent;
         data += bytes_sent;
     }
+    return 0;
 }
 
-void http_send_file(int dst_fd, int src_fd) {
+int http_send_file(int dst_fd, int src_fd) {
     const int buf_size = 4096;
     char buf[buf_size];
     ssize_t bytes_read;
+    int status;
     while( (bytes_read=read(src_fd, buf, buf_size))!=0) {
-        http_send_data(dst_fd, buf, bytes_read);
+        status = http_send_data(dst_fd, buf, bytes_read);
+        if(status < 0) return status;
     }
+    return 0;
 }
 
 char *http_get_mime_type(char *file_name) {
@@ -180,13 +184,14 @@ static int get_file_size(int fd) {
 }
 
 /* send a http response to socket fd with a file specified by path as body */
-void reply_with_file(int fd, char *path) {
+int reply_with_file(int fd, char *path) {
     http_start_response(fd, 200);
     http_send_header(fd, "Content-Type", http_get_mime_type(path));
     int src_fd = open(path,O_RDONLY);
     int file_size = get_file_size(src_fd);
     dprintf(fd, "Content-Length: %d\r\n", file_size);
     http_end_headers(fd);
-    http_send_file(fd, src_fd);
+    int status = http_send_file(fd, src_fd);
     close(src_fd);
+    return status;
 }

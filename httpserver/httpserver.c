@@ -178,13 +178,15 @@ void* relay_message(void* endpoints) {
     struct fd_pair* pair = (struct fd_pair*)endpoints;   
     int src_fd = pair->read_fd;
     int dst_fd = pair->write_fd;
-    printf("src fd: %d, dst fd: %d\n", src_fd, dst_fd);
+    /* printf("src fd: %d, dst fd: %d\n", src_fd, dst_fd); */
     char buffer[4096];
     int size = 0;
+    int ret;
     while((size=read(src_fd, buffer, sizeof(buffer)-1))>0) {
         buffer[size] = '\0';
         printf("%s\n", buffer);
-        http_send_string(dst_fd, buffer);
+        ret = http_send_string(dst_fd, buffer);
+        if(ret<0) return NULL;
     }
     return NULL;
 }
@@ -212,6 +214,7 @@ void* proxy_request_handler(void* unused) {
         }
         close(req_fd);
         close(target_fd);
+        printf("Socket closed, proxy request finished.\n");
     }
     return NULL;
 }
@@ -339,6 +342,7 @@ void exit_with_usage() {
 
 int main(int argc, char **argv) {
     signal(SIGINT, signal_callback_handler);
+    signal(SIGPIPE, SIG_IGN);
 
     /* Default settings */
     server_port = 8000;

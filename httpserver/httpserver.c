@@ -170,38 +170,68 @@ int connect_to_host(char *hostname, int port) {
 }
 
 struct fd_pair {
-    int read_fd;
-    int write_fd;
+    int *read_fd;
+    int *write_fd;
+    pthread_mutex_t* mutex;
+    int *closed;
 };
 
 void* relay_message(void* endpoints) {
     struct fd_pair* pair = (struct fd_pair*)endpoints;   
-    int src_fd = pair->read_fd;
-    int dst_fd = pair->write_fd;
-    /* printf("src fd: %d, dst fd: %d\n", src_fd, dst_fd); */
+    
     char buffer[4096];
     int size = 0;
     int ret;
-    while((size=read(src_fd, buffer, sizeof(buffer)-1))>0) {
+    while((size=read(*pair->read_fd, buffer, sizeof(buffer)-1))>0) {
         buffer[size] = '\0';
-        printf("%s\n", buffer);
-        ret = http_send_string(dst_fd, buffer);
+        /* printf("%s\n", buffer); */
+        printf("Thread %lu try to send message\n", pthread_self());
+        ret = http_send_string(*pair->write_fd, buffer);
         if(ret<0) return NULL;
+        printf("Thread %lu try to read message\n", pthread_self());
     }
+
+    pthread_mutex_lock(pair->mutex);
+    /* This maybe contains a bug: 
+     * Suppose a thead pool has been created with proxy_request_handler to serve the proxy request.
+     * After src_fd and dst_fd are closed in thread A and before its cooperating thread B, which is blocked by reading dst_fd,
+     * reacts to this action, another connection arrives and make src_fd open again, which will leave the thread B which should
+     * have exited to continue to block. Setting fd to -1 first and then closing them can fix this bug.
+     * */
+    if(!*pair->closed) {
+        int write_fd = *pair->write_fd, read_fd = *pair->read_fd;
+        *pair->write_fd = -1;
+        *pair->read_fd = -1;
+        close(write_fd);
+        close(read_fd);
+        *pair->closed = 1;
+    }
+    pthread_mutex_unlock(pair->mutex);
+
+    printf("Thread %lu exited\n", pthread_self());
     return NULL;
 }
 
 void* proxy_request_handler(void* unused) {
     while(1){
         int req_fd = wq_pop(&work_queue);
-        printf("Process %d, thread %lu will handle proxy request.\n", getpid(),  pthread_self());
+        printf("Thread %lu will handle proxy request.\n", pthread_self());
         int target_fd = connect_to_host(server_proxy_hostname, server_proxy_port);
 
         struct fd_pair pairs[2];
-        pairs[0].read_fd = req_fd;
-        pairs[0].write_fd = target_fd;
-        pairs[1].read_fd = target_fd;
-        pairs[1].write_fd = req_fd;
+        pthread_mutex_t mutex;
+        int closed = 0;
+        pthread_mutex_init(&mutex, NULL);
+
+        pairs[0].read_fd = &req_fd;
+        pairs[0].write_fd = &target_fd;
+        pairs[0].mutex = &mutex;
+        pairs[0].closed = &closed;
+
+        pairs[1].read_fd = &target_fd;
+        pairs[1].write_fd = &req_fd;
+        pairs[1].mutex = &mutex;
+        pairs[1].closed = &closed;
 
         pthread_t threads[2];
         int i = 0;
@@ -212,9 +242,8 @@ void* proxy_request_handler(void* unused) {
         for(i=0; i<2; i++) {
             pthread_join(*(threads+i), NULL);
         }
-        close(req_fd);
-        close(target_fd);
-        printf("Socket closed, proxy request finished.\n");
+
+        printf("Socket closed, proxy request finished.\n\n");
     }
     return NULL;
 }

@@ -172,78 +172,82 @@ int connect_to_host(char *hostname, int port) {
 struct fd_pair {
     int *read_fd;
     int *write_fd;
-    pthread_mutex_t* mutex;
-    int *closed;
+    pthread_cond_t* cond;
+    int *finished;
+    char* type;
+    unsigned long id;
 };
 
 void* relay_message(void* endpoints) {
     struct fd_pair* pair = (struct fd_pair*)endpoints;   
     
     char buffer[4096];
-    int size = 0;
-    int ret;
-    while((size=read(*pair->read_fd, buffer, sizeof(buffer)-1))>0) {
-        buffer[size] = '\0';
-        /* printf("%s\n", buffer); */
-        printf("Thread %lu try to send message\n", pthread_self());
-        ret = http_send_string(*pair->write_fd, buffer);
-        if(ret<0) return NULL;
-        printf("Thread %lu try to read message\n", pthread_self());
+    int read_ret, write_ret;
+    printf("%s thread %lu start to work\n", pair->type, pair->id);
+    while((read_ret=read(*pair->read_fd, buffer, sizeof(buffer)-1))>0) {
+        write_ret = http_send_data(*pair->write_fd, buffer, read_ret);
+        if(write_ret<0) break;
     }
+    
+    if(read_ret<=0) printf("%s thread %lu read failed, status %d\n", pair->type, pair->id, read_ret);
+    if(write_ret<=0) printf("%s thread %lu write failed, status %d\n", pair->type, pair->id, write_ret);
 
-    pthread_mutex_lock(pair->mutex);
-    /* This maybe contains a bug: 
-     * Suppose a thead pool has been created with proxy_request_handler to serve the proxy request.
-     * After src_fd and dst_fd are closed in thread A and before its cooperating thread B, which is blocked by reading dst_fd,
-     * reacts to this action, another connection arrives and make src_fd open again, which will leave the thread B which should
-     * have exited to continue to block. Setting fd to -1 first and then closing them can fix this bug.
-     * */
-    if(!*pair->closed) {
-        int write_fd = *pair->write_fd, read_fd = *pair->read_fd;
-        *pair->write_fd = -1;
-        *pair->read_fd = -1;
-        close(write_fd);
-        close(read_fd);
-        *pair->closed = 1;
-    }
-    pthread_mutex_unlock(pair->mutex);
+    *pair->finished = 1;
+    pthread_cond_signal(pair->cond);
 
-    printf("Thread %lu exited\n", pthread_self());
+    printf("%s thread %lu exited\n", pair->type, pair->id);
     return NULL;
 }
 
+static unsigned long id;
+pthread_mutex_t id_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 void* proxy_request_handler(void* unused) {
+    unsigned long local_id;
     while(1){
         int req_fd = wq_pop(&work_queue);
-        printf("Thread %lu will handle proxy request.\n", pthread_self());
         int target_fd = connect_to_host(server_proxy_hostname, server_proxy_port);
+
+        pthread_mutex_lock(&id_mutex);
+        local_id = id++;
+        pthread_mutex_unlock(&id_mutex);
+
+        printf("Thread %lu will handle proxy request %lu.\n", pthread_self(), local_id);
 
         struct fd_pair pairs[2];
         pthread_mutex_t mutex;
-        int closed = 0;
+        pthread_cond_t cond;
+        int finished = 0;
         pthread_mutex_init(&mutex, NULL);
+        pthread_cond_init(&cond, NULL);
 
         pairs[0].read_fd = &req_fd;
         pairs[0].write_fd = &target_fd;
-        pairs[0].mutex = &mutex;
-        pairs[0].closed = &closed;
+        pairs[0].finished = &finished;
+        pairs[0].type = "request";
+        pairs[0].cond = &cond;
+        pairs[0].id = local_id;
 
         pairs[1].read_fd = &target_fd;
         pairs[1].write_fd = &req_fd;
-        pairs[1].mutex = &mutex;
-        pairs[1].closed = &closed;
+        pairs[1].finished = &finished;
+        pairs[1].type = "response";
+        pairs[1].cond = &cond;
+        pairs[1].id = local_id;
 
         pthread_t threads[2];
-        int i = 0;
-        for(; i<2; i++) {
-            pthread_create(threads+i, NULL, relay_message, pairs+i);
-        }
+        pthread_create(threads, NULL, relay_message, pairs);
+        pthread_create(threads+1, NULL, relay_message, pairs+1);
 
-        for(i=0; i<2; i++) {
-            pthread_join(*(threads+i), NULL);
-        }
+        if(!finished) pthread_cond_wait(&cond, &mutex);
 
-        printf("Socket closed, proxy request finished.\n\n");
+        close(req_fd);
+        close(target_fd);
+
+        pthread_mutex_destroy(&mutex);
+        pthread_cond_destroy(&cond);
+
+        printf("Socket closed, proxy request %lu finished.\n\n", local_id);
     }
     return NULL;
 }

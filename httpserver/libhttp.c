@@ -184,14 +184,14 @@ static int get_file_size(int fd) {
 }
 
 /* send a http response to socket fd with a file specified by path as body */
-int reply_with_file(int fd, char *path) {
-    http_start_response(fd, 200);
+int reply_with_file(int fd, char *path, int status) {
+    http_start_response(fd, status);
     http_send_header(fd, "Content-Type", http_get_mime_type(path));
     int src_fd = open(path,O_RDONLY);
     int file_size = get_file_size(src_fd);
     dprintf(fd, "Content-Length: %d\r\n", file_size);
     http_end_headers(fd);
-    int status = http_send_file(fd, src_fd);
+    int ret = http_send_file(fd, src_fd);
     close(src_fd);
-    return status;
+    return ret;
 }

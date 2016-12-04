@@ -59,7 +59,7 @@ void handle_files_request(int fd) {
         while((dp = readdir(dirp))!=NULL) {
             if(strcmp(dp->d_name, "index.html")==0) {
                 char *filename = join_path(full_path, "/index.html", NULL);
-                reply_with_file(fd, filename);
+                reply_with_file(fd, filename, 200);
                 free(filename);
                 free(full_path);
                 closedir(dirp);
@@ -106,11 +106,11 @@ void handle_files_request(int fd) {
         free(send_buffer);
     } else {
         if (access(full_path, F_OK) == -1) {
-            http_start_response(fd, 404);
+            reply_with_file(fd, "./404.html", 404);
             goto EXIT;
         }
 
-        reply_with_file(fd, full_path);
+        reply_with_file(fd, full_path, 200);
     }
 EXIT: close(fd);
 }
